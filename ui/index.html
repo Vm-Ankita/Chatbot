@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ERP Chatbot</title>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+  }
+
+  /* Floating chat container */
+  .chat-container {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 340px;
+    height: 520px;
+    background: #f8fafc;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  .chat-header {
+    padding: 12px;
+    background: #2563eb;
+    color: white;
+    font-weight: bold;
+    border-radius: 12px 12px 0 0;
+  }
+
+  /* Messages */
+  .chat-body {
+    flex: 1;
+    padding: 10px;
+    overflow-y: auto;
+  }
+
+  .bot-msg, .user-msg {
+    max-width: 85%;
+    padding: 8px 10px;
+    margin: 6px 0;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .bot-msg {
+    background: #e5e7eb;
+    align-self: flex-start;
+  }
+
+  .user-msg {
+    background: #2563eb;
+    color: white;
+    align-self: flex-end;
+  }
+
+  /* Input area */
+  .chat-input {
+    display: flex;
+    padding: 8px;
+    border-top: 1px solid #ddd;
+  }
+
+  .chat-input input {
+    flex: 1;
+    padding: 8px;
+    font-size: 14px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+  }
+
+  .chat-input button {
+    margin-left: 6px;
+    padding: 8px 12px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+</style>
+</head>
+
+<body>
+
+<div class="chat-container">
+  <div class="chat-header">VM-Chatbot</div>
+
+  <div class="chat-body" id="chat">
+    <div class="bot-msg">
+      How can I help you today?
+    </div>
+  </div>
+
+  <div class="chat-input">
+    <input id="q" placeholder="Ask me anything..." onkeydown="if(event.key==='Enter') send()" />
+    <button onclick="send()">➤</button>
+  </div>
+</div>
+
+<script>
+async function send() {
+  const input = document.getElementById("q");
+  const chat = document.getElementById("chat");
+  const question = input.value.trim();
+  if (!question) return;
+
+  // User message
+  const userDiv = document.createElement("div");
+  userDiv.className = "user-msg";
+  userDiv.innerText = question;
+  chat.appendChild(userDiv);
+
+  input.value = "";
+  chat.scrollTop = chat.scrollHeight;
+
+  // Bot thinking
+  const botDiv = document.createElement("div");
+  botDiv.className = "bot-msg";
+  botDiv.innerText = "Typing...";
+  chat.appendChild(botDiv);
+  chat.scrollTop = chat.scrollHeight;
+
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question })
+    });
+
+    const data = await res.json();
+    botDiv.innerText = data.answer;
+  } catch {
+    botDiv.innerText = "Sorry, I couldn’t connect to the server.";
+  }
+
+  chat.scrollTop = chat.scrollHeight;
+}
+</script>
+
+</body>
+</html>
