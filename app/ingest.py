@@ -1,8 +1,12 @@
 import requests
 import re
+from app.ocr_utils import extract_text_from_image
 from app.utils import encode_data
 
 API_URL = "https://preprod.vmedulife.com/api/helpDesk/documentationPublicData.php"
+
+# 🔥 MASTER OCR SWITCH
+ENABLE_OCR = True
 
 
 # -----------------------------
@@ -15,10 +19,28 @@ def clean_html(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def extract_all_text_fields(obj: dict) -> str:
+    """
+    Extract ALL meaningful text from any ERP object.
+    Future-proof: if ERP adds new text fields, they are auto-included.
+    """
+    texts = []
+
+    for k, v in obj.items():
+        if isinstance(v, str):
+            clean = clean_html(v)
+            if len(clean) > 10:   # ignore ids, flags, short labels
+                texts.append(clean)
+
+    return "\n".join(texts)
+
+
+# -----------------------------
+# Demo point extractor
+# -----------------------------
 def extract_demo_points(res: dict):
     """
-    Extract demo points from deeply nested ERP structure.
-    Returns list of dicts with clean text.
+    Extract ALL ERP text + screenshot text (OCR).
     """
     points = []
 
@@ -36,13 +58,49 @@ def extract_demo_points(res: dict):
             if not isinstance(demo_data, dict):
                 continue
 
+            count = 0
             for demo in demo_data.values():
-                title = clean_html(demo.get("point", ""))
-                desc = clean_html(demo.get("explanation", ""))
+                count += 1
+                if count % 50 == 0:
+                    print(f"⏳ Processed {count} demo points...")
 
-                text = "\n".join(t for t in [title, desc] if t)
-                if len(text) > 20:
-                    points.append(text)
+                # 1️⃣ Extract ALL available ERP text
+                text_from_api = extract_all_text_fields(demo)
+
+                # 2️⃣ Decide OCR usage (smart & fast)
+                do_ocr = ENABLE_OCR and len(text_from_api) < 120
+
+                image_texts = []
+
+                if do_ocr:
+                    image_urls = []
+
+                    # 🔹 FORMAT A: attachmentPath + AttachmentArray
+                    attachment_path = demo.get("attachmentPath", "")
+                    attachments = demo.get("AttachmentArray", [])
+
+                    if attachment_path and isinstance(attachments, list):
+                        for img in attachments[:2]:
+                            image_urls.append(f"{attachment_path}/{img}")
+
+                    # 🔹 FORMAT B: image[].imagePath
+                    for img in demo.get("image", []):
+                        if isinstance(img, dict) and img.get("imagePath"):
+                            image_urls.append(img["imagePath"])
+
+                    # 🔹 OCR (limit to 2 images TOTAL)
+                    for img_url in image_urls[:2]:
+                        ocr_text = extract_text_from_image(img_url)
+                        if ocr_text and len(ocr_text) > 20:
+                            image_texts.append(ocr_text)
+
+                # 3️⃣ Merge API text + OCR text
+                final_text = "\n".join(
+                    [text_from_api] + image_texts
+                ).strip()
+
+                if len(final_text) > 30:
+                    points.append(final_text)
 
     return points
 
@@ -94,16 +152,25 @@ def get_modules():
 
 
 def get_demo_response(module_id):
-    r = requests.post(
-        API_URL,
-        files={
-            "HelpDeskGetModuleWiseDemoPointList": (None, "true"),
-            "data": (None, encode_data({"moduleId": str(module_id)}))
-        },
-        timeout=30
-    )
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.post(
+            API_URL,
+            files={
+                "HelpDeskGetModuleWiseDemoPointList": (None, "true"),
+                "data": (None, encode_data({"moduleId": str(module_id)}))
+            },
+            timeout=15
+        )
+
+        if r.status_code != 200:
+            print(f"⚠️ Skipping module {module_id} (HTTP {r.status_code})")
+            return {}
+
+        return r.json()
+
+    except Exception as e:
+        print(f"⚠️ Error fetching module {module_id}: {e}")
+        return {}
 
 
 # -----------------------------
@@ -115,20 +182,30 @@ def collect_documents():
 
     print(f"🔍 Found {len(modules)} modules")
 
-    for m in modules:
-        module_id = m["moduleId"]
-        module_name = m["moduleName"]
+    for idx, m in enumerate(modules, start=1):
+        module_id = m.get("moduleId")
+        module_name = m.get("moduleName", "Unknown Module")
 
-        res = get_demo_response(module_id)
-        demo_texts = extract_demo_points(res)
+        try:
+            res = get_demo_response(module_id)
 
-        for text in demo_texts:
-            documents.append(
-                f"""
-Module: {module_name}
-{text}
-"""
-            )
+            if not res or not isinstance(res, dict):
+                print(f"⚠️ Skipping module {module_id} (no data)")
+                continue
+
+            demo_texts = extract_demo_points(res)
+
+            for text in demo_texts:
+                documents.append(
+                    f"Module: {module_name}\n{text}"
+                )
+
+        except Exception as e:
+            print(f"⚠️ Error processing module {module_id}: {e}")
+            continue
+
+        if idx % 5 == 0:
+            print(f"⏳ Processed {idx}/{len(modules)} modules")
 
     print(f"✅ Collected {len(documents)} documentation chunks")
     return documents
